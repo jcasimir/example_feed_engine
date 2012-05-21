@@ -1,39 +1,51 @@
 class TwitterJob
   @queue = :tweet
 
-  def self.perform(current_user, authentication)
-    client = twitter_client(authentication["token"],authentication["secret"])
+  attr_accessor :user, :authentication
 
-    uid = authentication['uid'].to_i
+  def self.perform(user, authentication)
+    self.new(user, authentication).run
+  end
 
-    user =  User.find(current_user["id"])
+  def initialize(user, authentication)
+    @user = User.find(user["id"])
+    @authentication = authentication
+  end
 
-    unless user.twitter_items.any?
-      # FIRST RUN - Get all tweets
-      client.user_timeline(uid).reverse.each do |tweet| 
-        twitter_item = user.twitter_items.create(:tweet => tweet, :tweet_time => tweet.created_at)
-      end
+  def client
+    @client ||= Twitter::Client.new({
+      :consumer_key => ENV["TWITTER_KEY"],
+      :consumer_secret => ENV["TWITTER_SECRET"],
+      :oauth_token => authentication["token"],
+      :oauth_token_secret => authentication["secret"]})
+  end
+
+  def uid
+    @uid ||= authentication['uid'].to_i
+  end
+
+  def run
+    if user.twitter_items.any?
+      get_recent_tweets
     else
-      # SUBSEQUENT RUNS - only get tweets since last tweet
-      last_tweet_id = users_last_tweet_id(user)
-      # create all the twitter items
-      # insert these items into the user's stream
-      client.user_timeline(uid, :since_id => last_tweet_id).reverse.each do |tweet| 
-        twitter_item = user.twitter_items.create(:tweet => tweet, :tweet_time => tweet.created_at)
-      end
+      get_all_tweets
     end
     user.save
   end
 
-  def self.users_last_tweet_id(user)
-    user.last_twitter_item.tweet.id
+  def get_all_tweets
+    client.user_timeline(uid).reverse.each do |tweet| 
+      user.twitter_items.create(:tweet => tweet, :tweet_time => tweet.created_at)
+    end
   end
 
-  def self.twitter_client(token,secret)
-    Twitter::Client.new({
-      :consumer_key => ENV["TWITTER_KEY"],
-      :consumer_secret => ENV["TWITTER_SECRET"],
-      :oauth_token => token,
-      :oauth_token_secret => secret})
+  def get_recent_tweets
+    client.user_timeline(uid, :since_id => last_tweet_id).reverse.each do |tweet| 
+      user.twitter_items.create(:tweet => tweet, :tweet_time => tweet.created_at)
+    end
+  end
+
+  def last_tweet_id
+    user.last_twitter_item.tweet.id
   end
 end 
